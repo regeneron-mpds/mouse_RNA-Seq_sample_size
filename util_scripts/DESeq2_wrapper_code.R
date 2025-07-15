@@ -14,6 +14,10 @@ DESeq2_wrapper <- function(counts, TPM, design, tissues_in_order) {
   DE_res[["Padj"]] = DE_res[["Fold.Change"]]
   DE_res[["Selected"]] = DE_res[["Fold.Change"]] - 1
   DE_res[["Selected.pval"]] = DE_res[["Fold.Change"]] - 1
+  DE_res[["Wald"]] = DE_res[["Fold.Change"]] * NA
+  DE_res[["padj.01"]] = DE_res[["padj.1"]] = DE_res[["padj.999"]] = DE_res[["Fold.Change"]] * NA
+  DE_res[["FC.ashr"]] = DE_res[["FC.apeglm"]] = DE_res[["Fold.Change"]] * NA
+
   if (! missing(TPM)) {
     DE_res[["meanX.TPM"]] <- matrix(NA, length(genes), length(tissues_in_order), dimnames = list(genes, tissues_in_order))
     DE_res[["meanY.TPM"]] <- matrix(NA, length(genes), length(tissues_in_order), dimnames = list(genes, tissues_in_order))
@@ -33,13 +37,14 @@ DESeq2_wrapper <- function(counts, TPM, design, tissues_in_order) {
     system.time(this_dds <- DESeq(this_dds))
     resultsNames(this_dds)
     
-    this_res <- results(this_dds, name = "genotype_Het_vs_WT")
+    this_res <- results(this_dds, name = "genotype_Het_vs_WT", alpha = 0.05)
     stopifnot(identical(rownames(this_res), genes))
     
     DE_res[["Fold.Change"]][, this_tissue] <- 2^this_res$log2FoldChange
     DE_res[["Pval"]][, this_tissue] <- this_res$pvalue
     DE_res[["Padj"]][, this_tissue] <- this_res$padj
-    DE_res[["Selected"]][, this_tissue] <- as.numeric(!is.na(this_res$padj) &
+    DE_res[["Wald"]][, this_tissue] <- this_res$stat
+	DE_res[["Selected"]][, this_tissue] <- as.numeric(!is.na(this_res$padj) &
                                                           this_res$padj < PADJ_CUTOFF &
                                                           abs(this_res$log2FoldChange) >= log2(FC_CUTOFF))
     
@@ -51,6 +56,13 @@ DESeq2_wrapper <- function(counts, TPM, design, tissues_in_order) {
     DE_res[["meanX.TPM"]][genes, this_tissue] <- apply(TPM[genes, WT.samples], 1, function(x) round(mean(x), 3))
     (Het.samples <- this_dds@colData@rownames[which(this_dds@colData@listData$genotype == "Het")])
     DE_res[["meanY.TPM"]][genes, this_tissue] <- apply(TPM[genes, Het.samples], 1, function(x) round(mean(x), 3))
+
+	# reviewer1.alpha.plus.shrinkage
+    DE_res[["padj.01"]][, this_tissue] <- results(this_dds, name = "genotype_Het_vs_WT", alpha = 0.01)$padj
+    DE_res[["padj.1"]][, this_tissue] <- results(this_dds, name = "genotype_Het_vs_WT", alpha = 0.1)$padj
+    DE_res[["padj.999"]][, this_tissue] <- results(this_dds, name = "genotype_Het_vs_WT", alpha = 0.999)$padj
+    DE_res[["FC.ashr"]][, this_tissue] <- 2^(lfcShrink(this_dds, type = 'ashr', coef = 2)$log2FoldChange)
+    DE_res[["FC.apeglm"]][, this_tissue] <- 2^(lfcShrink(this_dds, type = 'apeglm', coef = 2)$log2FoldChange)
   }
   
   return(DE_res)

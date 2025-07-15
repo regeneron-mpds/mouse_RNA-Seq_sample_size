@@ -21,7 +21,7 @@ for (i in 1:TOTAL_RUNS) {
 }
 
 # read in gene annotation information
-gene_annots <- read.table("gene_annotation.tsv", row.names = 1, sep='\t', header=T, comment.char = "")
+gene_annots <- read.table("annotation/gene_annotation.tsv", row.names = 1, sep='\t', header=T, comment.char = "")
 head(gene_annots)
 
 #################

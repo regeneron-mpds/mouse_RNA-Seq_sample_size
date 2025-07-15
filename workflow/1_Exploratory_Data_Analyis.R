@@ -17,7 +17,7 @@ head(design)
 tissues_in_order <- sort(unique(design$tissue))
 
 # read in gene annotation information
-gene_annots <- read.table("gene_annotation.tsv", row.names = 1, sep='\t', header=T, comment.char = "")
+gene_annots <- read.table("annotation/gene_annotation.tsv", row.names = 1, sep='\t', header=T, comment.char = "")
 head(gene_annots)
 
 # read in counts and TPM files
@@ -69,7 +69,7 @@ for (this_tissue in tissues_in_order) {
   
   # correlation with Dchs1 expression?
   stopifnot(identical(rownames(tmp_design), rownames(vst_pca$x)))
-  pca_gene_cors <- apply(vst_pca$x, 2, function(pcaval) cor(pcaval, vst_cts["Dchs1",tmp_design$sample_id]))
+  pca_gene_cors <- apply(vst_pca$x, 2, function(pcaval) cor(pcaval, vst_cts["Dchs1", tmp_design$sample_id]))
   p3 <- ggplot(data.frame(PCA_Dchs1_crlxn = pca_gene_cors,
                           PC = 1:ncol(vst_pca$x),
                           correlation_sign = ifelse(pca_gene_cors > 0, "positive", "negative")),
@@ -102,7 +102,9 @@ for (this_tissue in tissues_in_order) {
               color = 'black', fontface = 'bold', size = 10, show.legend = FALSE)
   openPng(paste0("PCA_Dchs1_OLremoved_", this_tissue), p = p1, out_dir = "figures_EDA/")
   openPng(paste0("PCA_Dchs1_OLremoved_", this_tissue, "_labeled"), p = p1 + geom_text(vjust = 2, size = 5, show.legend = FALSE), out_dir = "figures_EDA/")
-  
+
+  stopifnot(identical(rownames(tmp_design), rownames(vst_pca$x)))
+  pca_gene_cors <- apply(vst_pca$x, 2, function(pcaval) cor(pcaval, vst_cts["Dchs1", tmp_design$sample_id]))
   p3 <- ggplot(data.frame(PCA_Dchs1_crlxn = pca_gene_cors,
                           PC = 1:ncol(vst_pca$x),
                           correlation_sign = ifelse(pca_gene_cors > 0, "positive", "negative")),
@@ -127,7 +129,7 @@ head(design)
 tissues_in_order <- sort(unique(design$tissue))
 
 # read in gene annotation information
-gene_annots <- read.table("gene_annotation.tsv", row.names = 1, sep='\t', header=T, comment.char = "")
+gene_annots <- read.table("annotation/gene_annotation.tsv", row.names = 1, sep='\t', header=T, comment.char = "")
 head(gene_annots)
 
 # read in counts and TPM files

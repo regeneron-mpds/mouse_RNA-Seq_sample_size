@@ -1,13 +1,16 @@
 set.seed(17)
 library(DESeq2)
 library(dplyr)
+library(ashr)
+library(apeglm)
 packageVersion('DESeq2')
 source("util_scripts/DESeq2_wrapper_code.R")
 
 suppressWarnings(dir.create("full_signature_refs/"))
+suppressWarnings(dir.create("result_objs/"))
 
 # read in gene annotation information
-gene_annots <- read.table("gene_annotation.tsv", row.names = 1, sep='\t', header=T, comment.char = "")
+gene_annots <- read.table("annotation/gene_annotation.tsv", row.names = 1, sep='\t', header=T, comment.char = "")
 head(gene_annots)
 
 #################
@@ -59,45 +62,76 @@ rownames(counts) = rownames(TPM) = gene_annots$GeneName
 # run DESeq2
 Fat4_res <- DESeq2_wrapper(counts, TPM, design, tissues_in_order)
 saveRDS(Fat4_res, file = "full_signature_refs/Fat4_res.RDS")
-
-
 ##################################
 ### Create gold standard lists ###
 ##################################
 gold_standards <- list()
-gold_standards$Dchs1 <- list()  # genes significant in Dchs1
-gold_standards$Fat4 <- list()   # genes significant in Fat4
+GS_passfail_results <- list()
 
 genes_in_order <- rownames(Dchs1_res[[1]])
 stopifnot(identical(genes_in_order, rownames(Fat4_res[[1]])))
 
+for (this_expt in c("Dchs1", "Fat4")) {
+this.DE <- get(paste0(this_expt, '_res'))
+gold_standards[[this_expt]] <- list() 
+GS_passfail_results[[this_expt]] <- list()
 for (tissue in tissues_in_order) {
-  for (tpm.cutoff in c(0, 1, 5)) {
-    for (ptype in c('Pval', 'Padj')) {
-      for (fc.cutoff in c(1, 1.2, 1.5, 2)) {                
-        for (p.thresh in c(0.01, 0.01, 0.05, 0.1, 1)) {
-          str <- paste(tissue, tpm.cutoff, ptype, p.thresh, fc.cutoff, sep = ',')
-              
-          gold_standards$Dchs1[[str]] <- as.numeric(!is.na(Dchs1_res[[ptype]][,tissue])) &
-                                              as.numeric(!is.na(Dchs1_res$Fold.Change[,tissue])) &
-                                              Dchs1_res[[ptype]][,tissue] <= p.thresh & 
-                                              ( (Dchs1_res$Fold.Change[,tissue] >= fc.cutoff & Dchs1_res$meanY.TPM[,tissue] >= tpm.cutoff) |
-                                                (Dchs1_res$Fold.Change[,tissue] <=  1/fc.cutoff & Dchs1_res$meanX.TPM[,tissue] >= tpm.cutoff))
-          gold_standards$Dchs1[[str]] <- genes_in_order[gold_standards$Dchs1[[str]]]
-          gold_standards$Dchs1[[str]] <- setdiff(gold_standards$Dchs1[[str]], c("Dchs1", "LacZ", "SV40"))
-  
-          
-          gold_standards$Fat4[[str]] <- as.numeric(!is.na(Fat4_res[[ptype]][,tissue])) &
-                                              as.numeric(!is.na(Fat4_res$Fold.Change[,tissue])) &
-                                              Fat4_res[[ptype]][,tissue] <= p.thresh & 
-                                              ( (Fat4_res$Fold.Change[,tissue] >= fc.cutoff & Fat4_res$meanY.TPM[,tissue] >= tpm.cutoff) |
-                                                (Fat4_res$Fold.Change[,tissue] <=  1/fc.cutoff & Fat4_res$meanX.TPM[,tissue] >= tpm.cutoff))
-          gold_standards$Fat4[[str]] <- genes_in_order[gold_standards$Fat4[[str]]]
-          gold_standards$Fat4[[str]] <- setdiff(gold_standards$Fat4[[str]], c("Fat4", "LacZ", "SV40"))
-        } # for pval.thresh
-      } #fc.cutoff
-    } # pvalue type
-  } # tpm.cutoff
-} #tissue
-saveRDS(gold_standards, file = 'result_objs/gold_standards.RDS')
+	for (ptype in c('Pval', 'Padj')) {
+		for (alphaType in c('std.05', 'match.padj.cutoff')) {
+			if (ptype == 'Pval' && alphaType == 'match.padj.cutoff') { next }
+			
+			for (pval.cutoff in c(0.01, 0.05, 0.1, 1)) {
+				# decide which padj to use
+				if (alphaType == 'std.05' || pval.cutoff == 0.05 || ptype == 'Pval') {
+					this.pvals <- this.DE[[ptype]][,tissue]
+				} else if (alphaType == 'match.padj.cutoff' && pval.cutoff == .01) {
+					this.pvals <- this.DE[['padj.01']][,tissue]
+				} else if (alphaType == 'match.padj.cutoff' && pval.cutoff == .1) {
+					this.pvals <- this.DE[['padj.1']][,tissue]
+				} else if (alphaType == 'match.padj.cutoff' && pval.cutoff == 1) {
+					this.pvals <- this.DE[['padj.999']][,tissue]
+				}
+				pval.pass <- !is.na(this.pvals) & this.pvals <= pval.cutoff
+				
+				for (FCtype in c("default", "ashr", "apeglm")) {
+					# decide which fold change to use
+					if (FCtype == "default") { 
+						this.fcs <- this.DE$Fold.Change[,tissue]
+					} else if (FCtype == "ashr") {
+						this.fcs <- this.DE$FC.ashr[,tissue]
+					} else if (FCtype == 'apeglm') {
+						this.fcs <- this.DE$FC.apeglm[,tissue]
+					}            
+					#shorthand
+					this.tpm <- this.DE$meanY.TPM[,tissue]
+					downreg <- !is.na(this.fcs) & this.fcs < 1
+					this.tpm[downreg] <- this.DE$meanX.TPM[downreg, tissue]
 
+					
+					for (tpm.cutoff in c(0, 1, 5)) {
+						tpm.pass <- this.tpm >= tpm.cutoff
+						tpm.pass <- tpm.pass & !names(this.tpm) %in% c(this_expt, "LacZ", "SV40") 
+						for (fc.cutoff in c(1, 1.2, 1.5, 2)) { 
+							fc.pass <- !is.na(this.fcs) & (this.fcs >= fc.cutoff | this.fcs <= 1/fc.cutoff)
+
+							str <- paste(tissue, tpm.cutoff, ptype, alphaType, FCtype, pval.cutoff, fc.cutoff, sep = ',')
+							gold_standards[[this_expt]][[str]] <- genes_in_order[pval.pass & fc.pass & tpm.pass]
+
+							pf <- matrix(NA, nrow(this.DE[[1]]), 5, 
+										 dimnames = list(rownames(this.DE[[1]]), paste0('grp', 0:4)))
+							pf[,'grp0'] <- !tpm.pass
+							pf[,'grp1'] <- tpm.pass & pval.pass & fc.pass # same as gs
+							pf[,'grp2'] <- tpm.pass & pval.pass & !fc.pass
+							pf[,'grp3'] <- tpm.pass & !pval.pass & fc.pass
+							pf[,'grp4'] <- tpm.pass & !pval.pass & !fc.pass
+							GS_passfail_results[[this_expt]][[str]] <- as.data.frame(pf)
+						} # tpm.cutoff
+					} # fc.cutoff
+				} # FCtype 
+			 }#  pval.cutoff
+			} # alphaType
+		} # ptype
+	} #tissue
+} # transgenic
+saveRDS(gold_standards, file = 'result_objs/gold_standards.RDS')
+saveRDS(GS_passfail_results, file = "result_objs/gold_standard_passfail_info.RDS")
